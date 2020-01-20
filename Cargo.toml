@@ -8,7 +8,8 @@ edition = "2018"
 
 [dependencies]
 heapless = "~0.5.2"
-atsamd21g18a = {version = "~0.6", features = ["rt"]}
+nom = { version = "~5.1", default-features = false }
+crc = { version = "~1.8.1", default-features = false }
 
 [profile.release]
 # Tell `rustc` to optimize for small code size.
