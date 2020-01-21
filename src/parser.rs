@@ -12,10 +12,25 @@ pub fn parse_address(i: &[u8]) -> IResult<&[u8], u8> {
     Ok((input, val >> 4))
 }
 
-pub fn parse(i: &[u8]) -> IResult<&[u8], DataFrame> {
-    let app_data = length_data(le_u8);
+pub fn parse_datalength(i: &[u8]) -> IResult<&[u8], u8> {
+    le_u8(i)
+}
+
+/// Helper method for Transport::ingest() to quickly determine data payload length
+/// from front end of buffer.
+pub fn parse_only_datalength(i: &[u8]) -> IResult<&[u8], u8> {
+    let (input, (_, data_len)) = tuple((parse_address, parse_datalength))(i)?;
+    Ok((input, data_len))
+}
+
+pub fn parse_app_data(i: &[u8]) -> IResult<&[u8], &[u8]> {
+    length_data(parse_datalength)(i)
+}
+
+/// Parses a complete data frame from a u8 slice.
+pub fn parse_dataframe(i: &[u8]) -> IResult<&[u8], DataFrame> {
     let crc = le_u16;
-    let (input, (addr, data, crcval)) = tuple((parse_address, app_data, crc))(i)?;
+    let (input, (addr, data, crcval)) = tuple((parse_address, parse_app_data, crc))(i)?;
     Ok((
         input,
         DataFrame {
@@ -48,7 +63,7 @@ mod tests {
     #[test]
     fn data_frame_test() {
         let data = [0x10u8, 0x2, 0xff, 0xfe, 0x12, 0x34];
-        let frame = parse(&data);
+        let frame = parse_dataframe(&data);
 
         match frame {
             Ok((_, o)) => {
@@ -71,7 +86,7 @@ mod tests {
     #[test]
     fn data_frame_fail() {
         let data = [0x0u8];
-        let frame = parse(&data);
+        let frame = parse_dataframe(&data);
         match frame {
             Err(e) => println!("test failed successfully: {:?}", e),
             _ => {
@@ -84,7 +99,7 @@ mod tests {
     #[test]
     fn crc_check() {
         let data = [0x10u8, 0x2, 0xff, 0xfe, 0x12, 0x34];
-        let frame = parse(&data);
+        let frame = parse_dataframe(&data);
 
         match frame {
             Ok((_, o)) => {

@@ -57,6 +57,14 @@ impl Transport {
         (byte & 0x00_ff) as Address
     }
 
+    /// Note that this function has a magic value 110% dependent on the data frame structure.
+    fn complete_message_received(&self, app_data_length: u8) -> bool {
+        // The 4 here comes from 1 byte for address, 1 byte for data length and 2 bytes for crc.
+        self.data_buf.len() >= (app_data_length + 4u8) as usize
+    }
+
+    /// This is a minimal ingester for data straight from SERCOM and should be called as soon
+    /// as data is received over the bus.
     pub fn ingest(&mut self, byte: u16) -> Option<Response> {
         if self.is_address_byte(byte) {
             let address = self.parse_address(byte);
@@ -75,13 +83,34 @@ impl Transport {
                 // we *should* not be in a state to continue receiving data.
                 self.data_buf.clear();
             }
+        } else if !self.data_buf.is_empty() {
+            // This should be safe to do here because we will have at MOST one full message
+            // (260 bytes) in the buffer.
+            self.data_buf.push(byte as u8).unwrap();
+            match parser::parse_only_datalength(&self.data_buf) {
+                Ok((_, o)) => {
+                    if self.complete_message_received(o) {
+                        return Some(Response);
+                    }
+                }
+                _ => (),
+            }
         }
-        match parser::parse(&self.data_buf) {
+        None
+    }
+
+    /// This is a pretty costly function but should be called periodically by the CPU.
+    /// The optional response returned here should be transmitted on the UART as soon as
+    /// it is received.
+    pub fn parse_data_buffer(&mut self) -> Option<DataFrame> {
+        match parser::parse_dataframe(&self.data_buf.clone()) {
             Ok((i, o)) => {
                 self.frame_buf.push(o).unwrap();
-                Some(Response)
+                self.data_buf.clear();
+                self.data_buf.extend_from_slice(i).unwrap();
             }
-            _ => None,
-        }
+            _ => (),
+        };
+        None
     }
 }
