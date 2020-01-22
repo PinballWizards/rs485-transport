@@ -36,9 +36,9 @@ fn crc_valid(data: &[u8], crc_value: &u16) -> Result<u16, u16> {
     }
 }
 
-type Response = [u8; 4];
-pub const ResponseAck: Response = [0x11, 0x0, 0x0, 0x0];
-pub const ResponseNack: Response = [0x12, 0x0, 0x0, 0x0];
+pub type Response = [u8; 4];
+pub const RESPONSE_ACK: Response = [0x11, 0x0, 0x0, 0x0];
+pub const RESPONSE_NACK: Response = [0x12, 0x0, 0x0, 0x0];
 
 pub struct Transport {
     address: Address,
@@ -96,9 +96,9 @@ impl Transport {
             match parser::parse_dataframe_noclone(&self.data_buf) {
                 Ok((_, (_, data, crc))) => {
                     if crc_valid(data, &crc).is_ok() {
-                        return Some(ResponseAck);
+                        return Some(RESPONSE_ACK);
                     } else {
-                        return Some(ResponseNack);
+                        return Some(RESPONSE_NACK);
                     }
                 }
                 Err(_) => (),
