@@ -1,4 +1,3 @@
-use heapless::Vec;
 use nom::{
     multi::length_data,
     number::streaming::{le_u16, le_u8},
@@ -111,8 +110,19 @@ mod tests {
     }
 
     #[test]
+    fn parse_crc_check() {
+        let val = 0x670fu16;
+        match parse_crc(&val.to_le_bytes()) {
+            Ok((_, o)) => {
+                assert_eq!(o, val);
+            }
+            _ => (),
+        }
+    }
+
+    #[test]
     fn crc_check() {
-        let data = [0x10u8, 0x2, 0xff, 0xfe, 0x12, 0x34];
+        let data = [0x10u8, 0x1, 0xff, 0x00, 0xff];
         let frame = parse_dataframe(&data);
 
         match frame {

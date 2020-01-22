@@ -30,7 +30,7 @@ impl DataFrame {
 
 fn crc_valid(data: &[u8], crc_value: &u16) -> Result<u16, u16> {
     let calculated_crc = crc16::checksum_usb(data);
-    match calculated_crc.cmp(&crc_value) {
+    match calculated_crc.cmp(crc_value) {
         Ordering::Equal => Ok(calculated_crc),
         _ => Err(calculated_crc),
     }
@@ -43,7 +43,6 @@ pub const RESPONSE_NACK: Response = [0x12, 0x0, 0x0, 0x0];
 pub struct Transport {
     address: Address,
     data_buf: Vec<u8, U512>,
-    frame_buf: Vec<DataFrame, U8>,
 }
 
 impl Transport {
@@ -51,12 +50,11 @@ impl Transport {
         Transport {
             address,
             data_buf: Vec::new(),
-            frame_buf: Vec::new(),
         }
     }
 
     fn is_address_byte(&self, byte: u16) -> bool {
-        byte & (1 << 9) == 1
+        byte & (1 << 8) != 0
     }
 
     fn address_match(&self, address: Address) -> bool {
@@ -65,11 +63,12 @@ impl Transport {
     }
 
     fn parse_address(&self, byte: u16) -> Address {
-        (byte & 0x00_ff) as Address
+        ((byte & 0x00_ff) >> 4) as Address
     }
 
     /// This is a minimal ingester for data straight from SERCOM and should be called as soon
-    /// as data is received over the bus.
+    /// as data is received over the bus. This function will return a response that must be sent
+    /// directly to the master.
     pub fn ingest(&mut self, byte: u16) -> Option<Response> {
         if self.is_address_byte(byte) {
             let address = self.parse_address(byte);
@@ -108,17 +107,55 @@ impl Transport {
     }
 
     /// This is a pretty costly function but should be called periodically by the CPU.
-    /// The optional response returned here should be transmitted on the UART as soon as
-    /// it is received.
+    /// Dataframes returned here should be passed to the application layer.
     pub fn parse_data_buffer(&mut self) -> Option<DataFrame> {
         match parser::parse_dataframe(&self.data_buf.clone()) {
             Ok((i, o)) => {
-                self.frame_buf.push(o).unwrap();
                 self.data_buf.clear();
                 self.data_buf.extend_from_slice(i).unwrap();
+                Some(o)
             }
-            _ => (),
-        };
-        None
+            _ => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    const ADDRESS: Address = 0x1;
+    const SPECIFIC_DATAFRAME_RAW_VALID_CRC: [u16; 5] = [0x01_10, 0x1, 0xff, 0x00, 0xff];
+    const SPECIFIC_DATAFRAME_RAW_INVALID_CRC: [u16; 5] = [0x01_10, 0x1, 0xff, 0x12, 0x34];
+
+    #[test]
+    fn test_is_address_pass() {
+        let t = Transport::new(ADDRESS);
+        let address_byte: u16 = 0x01_10;
+
+        assert_eq!(t.is_address_byte(address_byte), true);
+    }
+
+    #[test]
+    fn test_is_address_fail() {
+        let t = Transport::new(ADDRESS);
+        let address_byte: u16 = 0;
+
+        assert_eq!(t.is_address_byte(address_byte), false);
+    }
+
+    #[test]
+    fn test_ingest() {
+        let mut transport = Transport::new(ADDRESS);
+        for byte in SPECIFIC_DATAFRAME_RAW_VALID_CRC.iter() {
+            match transport.ingest(*byte) {
+                Some(resp) => {
+                    assert_eq!(resp, RESPONSE_ACK);
+                    return;
+                }
+                _ => (),
+            }
+        }
+        println!("frame is some? {}", transport.parse_data_buffer().is_some());
+        panic!("did not receive ACK with good CRC");
     }
 }
