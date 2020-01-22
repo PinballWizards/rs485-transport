@@ -1,3 +1,4 @@
+use heapless::Vec;
 use nom::{
     multi::length_data,
     number::streaming::{le_u16, le_u8},
@@ -7,12 +8,12 @@ use nom::{
 
 use crate::DataFrame;
 
-pub fn parse_address(i: &[u8]) -> IResult<&[u8], u8> {
+fn parse_address(i: &[u8]) -> IResult<&[u8], u8> {
     let (input, val) = le_u8(i)?;
     Ok((input, val >> 4))
 }
 
-pub fn parse_datalength(i: &[u8]) -> IResult<&[u8], u8> {
+fn parse_datalength(i: &[u8]) -> IResult<&[u8], u8> {
     le_u8(i)
 }
 
@@ -23,14 +24,22 @@ pub fn parse_only_datalength(i: &[u8]) -> IResult<&[u8], u8> {
     Ok((input, data_len))
 }
 
-pub fn parse_app_data(i: &[u8]) -> IResult<&[u8], &[u8]> {
+fn parse_app_data(i: &[u8]) -> IResult<&[u8], &[u8]> {
     length_data(parse_datalength)(i)
+}
+
+fn parse_crc(i: &[u8]) -> IResult<&[u8], u16> {
+    le_u16(i)
+}
+
+pub fn parse_only_crc(i: &[u8]) -> IResult<&[u8], u16> {
+    let (input, (_, _, crcval)) = tuple((parse_address, parse_app_data, parse_crc))(i)?;
+    Ok((input, crcval))
 }
 
 /// Parses a complete data frame from a u8 slice.
 pub fn parse_dataframe(i: &[u8]) -> IResult<&[u8], DataFrame> {
-    let crc = le_u16;
-    let (input, (addr, data, crcval)) = tuple((parse_address, parse_app_data, crc))(i)?;
+    let (input, (addr, data, crcval)) = tuple((parse_address, parse_app_data, parse_crc))(i)?;
     Ok((
         input,
         DataFrame {
@@ -39,6 +48,11 @@ pub fn parse_dataframe(i: &[u8]) -> IResult<&[u8], DataFrame> {
             crc: crcval,
         },
     ))
+}
+
+pub fn parse_dataframe_noclone(i: &[u8]) -> IResult<&[u8], (u8, &[u8], u16)> {
+    let (input, (addr, data, crcval)) = tuple((parse_address, parse_app_data, parse_crc))(i)?;
+    Ok((input, (addr, data, crcval)))
 }
 
 #[cfg(test)]

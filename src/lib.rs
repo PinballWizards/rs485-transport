@@ -2,6 +2,7 @@
 
 use heapless::{consts::*, Vec};
 
+use core::cmp::Ordering;
 use crc::crc16;
 
 pub mod parser;
@@ -19,7 +20,7 @@ pub struct DataFrame {
 
 impl DataFrame {
     pub fn crc_valid(&self) -> bool {
-        crc16::checksum_usb(&self.data) == self.crc
+        crc_valid(&self.data, &self.crc).is_ok()
     }
 
     pub fn is_broadcast(&self) -> bool {
@@ -27,7 +28,17 @@ impl DataFrame {
     }
 }
 
-pub struct Response;
+fn crc_valid(data: &[u8], crc_value: &u16) -> Result<u16, u16> {
+    let calculated_crc = crc16::checksum_usb(data);
+    match calculated_crc.cmp(&crc_value) {
+        Ordering::Equal => Ok(calculated_crc),
+        _ => Err(calculated_crc),
+    }
+}
+
+type Response = [u8; 4];
+pub const ResponseAck: Response = [0x11, 0x0, 0x0, 0x0];
+pub const ResponseNack: Response = [0x12, 0x0, 0x0, 0x0];
 
 pub struct Transport {
     address: Address,
@@ -57,12 +68,6 @@ impl Transport {
         (byte & 0x00_ff) as Address
     }
 
-    /// Note that this function has a magic value 110% dependent on the data frame structure.
-    fn complete_message_received(&self, app_data_length: u8) -> bool {
-        // The 4 here comes from 1 byte for address, 1 byte for data length and 2 bytes for crc.
-        self.data_buf.len() >= (app_data_length + 4u8) as usize
-    }
-
     /// This is a minimal ingester for data straight from SERCOM and should be called as soon
     /// as data is received over the bus.
     pub fn ingest(&mut self, byte: u16) -> Option<Response> {
@@ -87,13 +92,16 @@ impl Transport {
             // This should be safe to do here because we will have at MOST one full message
             // (260 bytes) in the buffer.
             self.data_buf.push(byte as u8).unwrap();
-            match parser::parse_only_datalength(&self.data_buf) {
-                Ok((_, o)) => {
-                    if self.complete_message_received(o) {
-                        return Some(Response);
+
+            match parser::parse_dataframe_noclone(&self.data_buf) {
+                Ok((_, (_, data, crc))) => {
+                    if crc_valid(data, &crc).is_ok() {
+                        return Some(ResponseAck);
+                    } else {
+                        return Some(ResponseNack);
                     }
                 }
-                _ => (),
+                Err(_) => (),
             }
         }
         None
