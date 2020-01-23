@@ -10,6 +10,7 @@ pub mod parser;
 type Address = u8;
 
 pub const BROADCAST_ADDRESS: Address = 0xff;
+pub const MASTER_ADDRESS: Address = 0x1;
 
 #[derive(Debug)]
 pub struct DataFrame {
@@ -40,15 +41,30 @@ pub type Response = [u8; 4];
 pub const RESPONSE_ACK: Response = [0x11, 0x0, 0x0, 0x0];
 pub const RESPONSE_NACK: Response = [0x12, 0x0, 0x0, 0x0];
 
+enum Device {
+    Master,
+    Slave,
+}
+
 pub struct Transport {
+    device: Device,
     address: Address,
     data_buf: Vec<u8, U512>,
 }
 
 impl Transport {
-    pub fn new(address: Address) -> Self {
+    pub fn new_slave(address: Address) -> Self {
         Transport {
+            device: Device::Slave,
             address,
+            data_buf: Vec::new(),
+        }
+    }
+
+    pub fn new_master() -> Self {
+        Transport {
+            device: Device::Master,
+            address: MASTER_ADDRESS,
             data_buf: Vec::new(),
         }
     }
@@ -88,19 +104,35 @@ impl Transport {
                 self.data_buf.clear();
             }
         } else if !self.data_buf.is_empty() {
-            // This should be safe to do here because we will have at MOST one full message
-            // (260 bytes) in the buffer.
-            self.data_buf.push(byte as u8).unwrap();
-
-            match parser::parse_dataframe_noclone(&self.data_buf) {
-                Ok((_, (_, data, crc))) => {
-                    if crc_valid(data, &crc).is_ok() {
-                        return Some(RESPONSE_ACK);
-                    } else {
-                        return Some(RESPONSE_NACK);
+            match self.data_buf.push(byte as u8) {
+                Err(_) => {
+                    // Error here means we've run out of space in the buffer...which
+                    // definitely shouldn't happen.
+                    self.data_buf.clear();
+                    match self.device {
+                        Device::Slave => return Some(RESPONSE_NACK),
+                        _ => (),
                     }
                 }
-                Err(_) => (),
+                _ => (),
+            };
+
+            match self.device {
+                Device::Slave => {
+                    match parser::parse_dataframe_noclone(&self.data_buf) {
+                        Ok((_, (_, data, crc))) => {
+                            // Full dataframe has been received, check the crc value and respond
+                            // appropriately.
+                            if crc_valid(data, &crc).is_ok() {
+                                return Some(RESPONSE_ACK);
+                            } else {
+                                return Some(RESPONSE_NACK);
+                            }
+                        }
+                        _ => (),
+                    }
+                }
+                _ => (),
             }
         }
         None
@@ -129,7 +161,7 @@ mod test {
 
     #[test]
     fn test_is_address_pass() {
-        let t = Transport::new(ADDRESS);
+        let t = Transport::new_slave(ADDRESS);
         let address_byte: u16 = 0x01_10;
 
         assert_eq!(t.is_address_byte(address_byte), true);
@@ -137,7 +169,7 @@ mod test {
 
     #[test]
     fn test_is_address_fail() {
-        let t = Transport::new(ADDRESS);
+        let t = Transport::new_slave(ADDRESS);
         let address_byte: u16 = 0;
 
         assert_eq!(t.is_address_byte(address_byte), false);
@@ -145,7 +177,7 @@ mod test {
 
     #[test]
     fn test_ingest() {
-        let mut transport = Transport::new(ADDRESS);
+        let mut transport = Transport::new_slave(ADDRESS);
         for byte in SPECIFIC_DATAFRAME_RAW_VALID_CRC.iter() {
             match transport.ingest(*byte) {
                 Some(resp) => {
@@ -157,5 +189,16 @@ mod test {
         }
         println!("frame is some? {}", transport.parse_data_buffer().is_some());
         panic!("did not receive ACK with good CRC");
+    }
+
+    #[test]
+    fn test_ingest_master() {
+        let mut transport = Transport::new_slave(ADDRESS);
+        for byte in SPECIFIC_DATAFRAME_RAW_VALID_CRC.iter() {
+            match transport.ingest(*byte) {
+                None => (),
+                _ => panic!("got response on master ingest"),
+            }
+        }
     }
 }
