@@ -57,6 +57,7 @@ pub fn parse_dataframe_noclone(i: &[u8]) -> IResult<&[u8], (u8, &[u8], u16)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::crc_valid;
     #[test]
     fn address_test() {
         let data = [0x10u8];
@@ -127,7 +128,7 @@ mod tests {
 
         match frame {
             Ok((_, o)) => {
-                assert_eq!(o.crc_valid(), true);
+                assert_eq!(crc_valid(&o.data, &o.crc).is_ok(), true);
             }
             _ => {
                 panic!("failed to parse data frame");

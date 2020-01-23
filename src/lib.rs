@@ -7,30 +7,62 @@ use crc::crc16;
 
 pub mod parser;
 
-type Address = u8;
+pub type Address = u8;
 
 pub const BROADCAST_ADDRESS: Address = 0xff;
 pub const MASTER_ADDRESS: Address = 0x1;
 
+const MAX_APPDATA_LEN: usize = 255;
+
+pub type AppData = Vec<u8, U256>;
+pub type RawDataFrame = Vec<u16, U260>;
+
 #[derive(Debug)]
 pub struct DataFrame {
     address: Address,
-    data: Vec<u8, U256>,
+    data: AppData,
     crc: u16,
 }
 
 impl DataFrame {
-    pub fn crc_valid(&self) -> bool {
-        crc_valid(&self.data, &self.crc).is_ok()
+    fn new(address: Address, app_data: &[u8]) -> Self {
+        let mut ret = DataFrame {
+            address: address,
+            data: Vec::new(),
+            crc: calculate_crc(app_data),
+        };
+        ret.data.extend_from_slice(app_data).unwrap();
+        ret
     }
 
     pub fn is_broadcast(&self) -> bool {
         self.address == BROADCAST_ADDRESS
     }
+
+    fn to_bytes(self) -> RawDataFrame {
+        let mut ret: RawDataFrame = Vec::new();
+        // Pack address
+        ret.push(((self.address as u16) << 4) | (1 << 8)).unwrap();
+        // Pack data length
+        ret.push(self.data.len() as u16).unwrap();
+        // Pack application data
+        for byte in self.data.iter() {
+            ret.push((*byte) as u16).unwrap();
+        }
+        // Pack CRC value
+        for byte in self.crc.to_le_bytes().iter() {
+            ret.push((*byte) as u16).unwrap();
+        }
+        ret
+    }
+}
+
+fn calculate_crc(data: &[u8]) -> u16 {
+    crc16::checksum_usb(data)
 }
 
 fn crc_valid(data: &[u8], crc_value: &u16) -> Result<u16, u16> {
-    let calculated_crc = crc16::checksum_usb(data);
+    let calculated_crc = calculate_crc(data);
     match calculated_crc.cmp(crc_value) {
         Ordering::Equal => Ok(calculated_crc),
         _ => Err(calculated_crc),
@@ -46,10 +78,12 @@ enum Device {
     Slave,
 }
 
+pub type DataBuffer = Vec<u8, U512>;
+
 pub struct Transport {
     device: Device,
     address: Address,
-    data_buf: Vec<u8, U512>,
+    data_buf: DataBuffer,
 }
 
 impl Transport {
@@ -150,6 +184,13 @@ impl Transport {
             _ => None,
         }
     }
+
+    pub fn send(&self, app_data: &[u8]) -> Result<RawDataFrame, usize> {
+        match app_data.len().cmp(&MAX_APPDATA_LEN) {
+            Ordering::Greater | Ordering::Equal => Err(app_data.len()),
+            _ => Ok(DataFrame::new(self.address, app_data).to_bytes()),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -193,7 +234,7 @@ mod test {
 
     #[test]
     fn test_ingest_master() {
-        let mut transport = Transport::new_slave(ADDRESS);
+        let mut transport = Transport::new_master();
         for byte in SPECIFIC_DATAFRAME_RAW_VALID_CRC.iter() {
             match transport.ingest(*byte) {
                 None => (),
