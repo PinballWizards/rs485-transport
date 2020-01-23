@@ -39,6 +39,10 @@ impl DataFrame {
         self.address == BROADCAST_ADDRESS
     }
 
+    pub fn app_data(&self) -> &AppData {
+        &self.data
+    }
+
     fn to_bytes(self) -> RawDataFrame {
         let mut ret: RawDataFrame = Vec::new();
         // Pack address
